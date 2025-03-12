@@ -29,3 +29,4 @@ pm2 restart hydrooj
 * 本插件细节未完善，有建议欢迎提交issue/pr
 * 本插件修改了components/user.html组件，如更新后遇前端错误，请自行解决或停用本插件
 * 有偿解决本人开发的插件使用问题，联系邮箱 admin@funfs.com
+* 请我喝杯咖啡：USDT(TRC20):TGnRYsYqA29SKCaYq5L1ZJYB3gm2VB7iHy
