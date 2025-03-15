@@ -1,5 +1,5 @@
 import {
-    _, Context, db, Handler, NotFoundError,ObjectId ,paginate, param, PermissionError, PRIV, Types
+    _, Context, db, Handler, SettingModel, NotFoundError,ObjectId ,paginate, param, PermissionError, PRIV, Types
 } from 'hydrooj';
 
 import { deleteUserCache } from 'hydrooj/src/model/user';
@@ -100,7 +100,7 @@ async function userBadgeSel(userId: number, badgeId: number): Promise<number> {
     if(userBadgeId) {
         const badge: Badge = await collbd.findOne({_id: badgeId});
         const badgeid: number = badge._id;
-        const payload: string = badge._id+'#'+badge.short+badge.backgroundColor+badge.fontColor+'#'+badge.title;
+        const payload: string = badge.short+badge.backgroundColor+badge.fontColor+'#'+badge.title;
         return await setUserBadge(userId, badgeid, payload);
     } else {
         return 0;
@@ -161,7 +161,7 @@ async function BadgeEdit(badgeId: number, short: string, title: string, backgrou
                 await UserBadgeModel.userBadgeAdd(userId, badgeId);
         }
     }
-    const badge: string = badgeId+'#'+short+backgroundColor+fontColor+'#'+title;
+    const badge: string = short+backgroundColor+fontColor+'#'+title;
     await resetBadge(badgeId, badge);
     return result.modifiedCount;    
 }
@@ -286,6 +286,11 @@ class BadgeDetailHandler extends Handler {
 
 
 export async function apply(ctx: Context) {
+    ctx.inject(['setting'], (c) => {
+        c.setting.AccountSetting(
+            SettingModel.Setting('setting_customize', 'badgeId', 0, 'number', 'badgeId', null, 3)
+        );
+    });
     ctx.Route('badge_manage', '/manage/badge', BadgeManageHandler, PRIV.PRIV_MANAGE_ALL_DOMAIN);
     ctx.Route('badge_add', '/badge/add', BadgeAddHandler, PRIV.PRIV_MANAGE_ALL_DOMAIN);
     ctx.Route('badge_edit', '/badge/:id/edit', BadgeEditHandler, PRIV.PRIV_MANAGE_ALL_DOMAIN);
