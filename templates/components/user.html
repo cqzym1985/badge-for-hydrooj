@@ -14,7 +14,7 @@
   {% if badge %}
     {% if udoc.badge %}
       {% set _badge = udoc.badge.split('#') %}
-      <a href="/badge/{{_badge[0]}}" class="user-profile-badge v-center" style="background-color:#{{ _badge[2] }}{% if _badge[3] %};color:#{{ _badge[3] }}{% endif %}" {%if _badge[4] %} data-tooltip="{{ _badge[4] }}" {% endif %} >{{ _badge[1] }}</a>
+      <a href="{{ url('badge_detail', id=udoc.badgeId) }}" class="user-profile-badge v-center" style="background-color:#{{ _badge[1] }}{% if _badge[2] %};color:#{{ _badge[2] }}{% endif %}" {%if _badge[3] %} data-tooltip="{{ _badge[3] }}" {% endif %} >{{ _badge[0] }}</a>
     {% endif %}
     {% if levelbadge and udoc.level %}
       {% set level = udoc.level %}
