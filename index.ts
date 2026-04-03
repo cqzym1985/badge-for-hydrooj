@@ -1,50 +1,46 @@
-import { Context, Handler, NotFoundError, param, PRIV, Types } from 'hydrooj';
-import { Badge } from './model';
-
-const UserBadgeModel = global.Hydro.model.userBadge;
-const BadgeModel = global.Hydro.model.badge;
-
-const user = global.Hydro.model.user;
+import {
+    Context, UserModel, SettingModel, Handler, NotFoundError, param, PRIV, Types, paginate, query
+} from 'hydrooj';
+import { UserBadgeModel, BadgeModel } from './model';
 
 class UserBadgeManageHandler extends Handler {
-
-    @param('page', Types.PositiveInt, true)
-    async get(_: string, page = 1, userId = this.user._id) {
-        const [ddocs, dpcount] = await this.ctx.db.paginate(
-            await UserBadgeModel.userBadgeGetMulti(this.ctx, userId),
+    @query('page', Types.PositiveInt, true)
+    async get(domainId: string, page = 1, uid = this.user._id) {
+        const [ddocs, dpcount] = await this.paginate(
+            await UserBadgeModel.getMulti(uid),
             page,
-            10
+            20
         );
-        const result = await (await BadgeModel.badgeGetMulti(this.ctx)).toArray();
-        const bdocs = Object.fromEntries(result.reduce((acc, item) => {
-            acc.set(item._id, item);
-            return acc;
-        }, new Map<number, Badge>()));
-        this.response.template = 'user_badge_manage.html';
-        const current_badge = (await this.ctx.db.collection('user').findOne({ _id: userId })).badge;
-        this.response.body = { ddocs, bdocs, dpcount, page, current_badge };
+        const badgeIds = ddocs.map(d => d.badgeId);
+        const badges = await BadgeModel.getMultiByIds(badgeIds);
+        const badgeMap = new Map(badges.map(b => [b._id, b]));
+        for (const ddoc of ddocs) {
+            ddoc.badge = badgeMap.get(ddoc.badgeId);
+        }
+        const udoc = await UserModel.getById(domainId, uid);
+        this.response.template = 'badge_mybadge.html';
+        this.response.body = { ddocs, dpcount, page, udoc }
     }
 
-    @param('badgeId', Types.PositiveInt, true)
-    async postEnable(_: string, badgeId: number) {
-        await UserBadgeModel.userBadgeSel(this.ctx, this.user._id, badgeId);
-        this.response.redirect = this.url('user_badge_manage');
+    @param('badgeId', Types.PositiveInt)
+    async postEnable(domainId: string, badgeId: number) {
+        await UserBadgeModel.sel(this.user._id, badgeId);
+        this.response.redirect = this.url('badge_mybadge');
     }
 
-    async postReset(_: string) {
-        await UserBadgeModel.userBadgeUnset(this.ctx, this.user._id);
-        this.response.redirect = this.url('user_badge_manage');
+    async postReset(domainId: string) {
+        await UserBadgeModel.unsetUserBadge(this.user._id);
+        this.response.redirect = this.url('badge_mybadge');
     }
 }
 
 class BadgeManageHandler extends Handler {
-
-    @param('page', Types.PositiveInt, true)
-    async get(_: string, page = 1) {
-        const[ddocs, dpcount] = await this.ctx.db.paginate(
-            await BadgeModel.badgeGetMulti(this.ctx),
+    @query('page', Types.PositiveInt, true)
+    async get(domainId: string, page = 1) {
+        const [ddocs, dpcount] = await this.paginate(
+            await BadgeModel.getMulti(),
             page,
-            10
+            20
         );
         this.response.template = 'badge_manage.html';
         this.response.body = { ddocs, dpcount, page };
@@ -52,8 +48,7 @@ class BadgeManageHandler extends Handler {
 }
 
 class BadgeAddHandler extends Handler {
-
-    async get() {
+    async get(domainId: string) {
         this.response.template = 'badge_add.html';
     }
 
@@ -63,121 +58,122 @@ class BadgeAddHandler extends Handler {
     @param('fontColor', Types.String)
     @param('content', Types.Content)
     @param('users', Types.NumericArray, true)
-    async postAdd(_: string, short: string, title: string, backgroundColor: string, fontColor: string, content: string, users: [number]) {
-        const badgeId = await BadgeModel.badgeAdd(this.ctx, short, title, backgroundColor, fontColor, content, users);
-        this.response.redirect = this.url('badge_detail', { id: badgeId });
+    async post(domainId: string, short: string, title: string, backgroundColor: string, fontColor: string, content: string, users: number[]) {
+      const badgeId = await BadgeModel.add(short, title, backgroundColor, fontColor, content, users);
+      this.response.redirect = this.url('badge_detail', { id: badgeId });
     }
 }
 
 class BadgeEditHandler extends Handler {
-
-    @param('id', Types.PositiveInt, true)
-    async get(_: string, id: number) {
-        const badge = await BadgeModel.badgeGet(this.ctx, id);
-        if (!badge) throw new NotFoundError(`Badge ${id} is not exist!`);
+    @param('id', Types.PositiveInt)
+    async get(domainId: string, id: number) {
+        const badge = await BadgeModel.get(id);
+        if (!badge) throw new NotFoundError(`徽章 ${id} 不存在！`);
         this.response.template = 'badge_edit.html';
-        this.response.body = { badge };
+        this.response.body = { badge }
     }
 
-    @param('id', Types.PositiveInt, true)
+    @param('id', Types.PositiveInt)
     @param('short', Types.String)
     @param('title', Types.String)
     @param('backgroundColor', Types.String)
     @param('fontColor', Types.String)
     @param('content', Types.Content)
     @param('users', Types.NumericArray, true)
-    async postUpdate(_: string, id: number, short: string, title: string, backgroundColor: string, fontColor: string, content: string, users: [number]) {
-        const users_old = (await BadgeModel.badgeGet(this.ctx, id)).users;
-        await BadgeModel.badgeEdit(this.ctx, id, short, title, backgroundColor, fontColor, content, users, users_old);
+    async postUpdate(domainId: string, id: number, short: string, title: string, backgroundColor: string, fontColor: string, content: string, users: number[]) {
+        const users_old = (await BadgeModel.get(id)).users;
+        await BadgeModel.edit(id, short, title, backgroundColor, fontColor, content, users, users_old);
         this.response.redirect = this.url('badge_detail', { id });
     }
 
-    @param('id', Types.PositiveInt, true)
-    async postDelete(_:string, id: number) {
-        await BadgeModel.badgeDel(this.ctx, id);
-        this.response.redirect = this.url('badge_manage');
+    @param('id', Types.PositiveInt)
+    async postDelete(domainId: string, id: number) {
+      await BadgeModel.del(id);
+      this.response.redirect = this.url('badge_manage');
     }
 }
 
 class BadgeDetailHandler extends Handler {
-    
     @param('id', Types.PositiveInt, true)
-    async get(domainId: string, id: number) {
-        const badge = await BadgeModel.badgeGet(this.ctx, id);
-        if (!badge) throw new NotFoundError(`Badge ${id} is not exist!`);
-        const udict = await user.getList(domainId, badge.users);
+    @query('page', Types.PositiveInt, true)
+    async get(domainId: string, id: number, page = 1) {
+        const badge = await BadgeModel.get(id);
+        if (!badge) throw new NotFoundError(`徽章 ${id} 不存在！`);
+        const userIds = badge.users?.sort((a, b) => a - b) || [];
+        const [dudocs, upcount] = await this.paginate(
+            UserModel.getMulti({ _id: { $in: userIds } }),
+            page,
+            20
+        );
+
+        const udict = await UserModel.getList(domainId, dudocs.map((x) => x._id));
+        const udocs = dudocs.map((x) => udict[x._id]);
+
         this.response.template = 'badge_detail.html';
-        this.response.body = { badge, udict };
+        this.response.body = { badge, udocs, upcount, page };
     }
 }
 
+class BadgeShowHandler extends Handler {
+    @query('page', Types.PositiveInt, true)
+    async get(domainId: string, page = 1) {
+        const [dudocs, upcount] = await this.paginate(
+            UserModel.getMulti({ badge: { $exists: true, $ne: "" } }),
+            page,
+            'ranking'
+        );
+        const udict = await UserModel.getList(domainId, dudocs.map((x) => x._id));
+        const udocs = dudocs.map((x) => udict[x._id]);
+        this.response.template = 'badge_show.html'; // 返回此页面
+        this.response.body = { udocs, upcount, page };
+    }
+}
 
 export async function apply(ctx: Context) {
-    ctx.Route('badge_manage', '/manage/badge', BadgeManageHandler, PRIV.PRIV_MANAGE_ALL_DOMAIN);
-    ctx.Route('badge_add', '/badge/add', BadgeAddHandler, PRIV.PRIV_MANAGE_ALL_DOMAIN);
-    ctx.Route('badge_edit', '/badge/:id/edit', BadgeEditHandler, PRIV.PRIV_MANAGE_ALL_DOMAIN);
-    ctx.Route('badge_detail', '/badge/:id', BadgeDetailHandler);
-    ctx.Route('user_badge_manage', '/mybadge', UserBadgeManageHandler, PRIV.PRIV_USER_PROFILE);
-    ctx.injectUI('ControlPanel', 'badge_manage');
-    ctx.injectUI('UserDropdown', 'user_badge_manage', () => ({ icon: 'crown', displayName: 'user_badge_manage' }));
-    ctx.i18n.load('zh', {
-        'Badge': '徽章',
-        'badge_manage': '徽章管理',
-        'badge_add': '添加徽章',
-        'badge_edit': '编辑徽章',
-        'badge_detail': '徽章详情',
-        'create at': '创建于',
-        'badge ID': '徽章ID',
-        'badge title': '徽章标题',
-        'badge short': '徽章简称',
-        'user_badge_manage': '我的徽章',
-        'get at': '获取时间',
-        'Enable': '启用',
-        'badge background color': '徽章背景色',
-        'badge font color': '徽章字体色',
-        'hex color code': '十六进制颜色代码',
-        'badge preview': '徽章预览',
-        'badge assignment': '徽章分配',
-        'User to assign this badge': '欲分配此徽章的用户',
-        'Display name, max 3 chars recommended': '显示名，建议3字以内',
-        'Also used as badge hover text': '另作徽章悬停时内容',
-        'Badge Owners': '持有徽章',
-        'Sorry, there are no badges.': '抱歉，这里没有徽章。',
-        'Sorry, You don\'t have any badge.': '抱歉，你还没有徽章。',
-        'Hover over a badge to view its title; click a badge to open its introduction page.': '鼠标悬停至徽章可查看徽章标题，单击徽章可打开徽章介绍页。',
-        'If you have any questions about badge validity, please contact the administrator.': '对徽章存续等有任何问题的，请联系站点管理员。',
-        'Current Badge': '当前徽章',
-        'No Badge Enabled': '您暂未启用任何徽章',
-        'Reset Badge': '重置徽章',
+    ctx.inject(['setting'], (c) => {
+        c.setting.AccountSetting(
+            SettingModel.Setting('setting_storage', 'badgeId', 0, 'number', 'badgeId', null, 3)
+        );
     });
-    ctx.i18n.load('en', {
-        'Badge': 'Badge',
-        'badge_manage': 'Badge Manage',
-        'badge_add': 'Badge Add',
-        'badge_edit': 'Badge Edit',
-        'badge_detail': 'Badge Detail',
-        'create at': 'Create At',
-        'badge id': 'Badge ID',
-        'badge title': 'Badge Title',
-        'badge short': 'Badge Short',
-        'user_badge_manage': 'My Badge',
-        'get at': 'Get At',
-        'enable': 'Enable',
-        'badge background color': 'Badge Background Color',
-        'badge font color': 'Badge Font Color',
-        'hex color code': 'Hex Color Code',
-        'badge preview': 'Badge Preview',
-        'badge assignment': 'Badge Assignment',
-        'User to assign this badge': 'User to assign this badge',
-        'Display name, max 3 chars recommended': 'Display name, max 3 chars recommended',
-        'Also used as badge hover text': 'Also used as badge hover text',
-        'Badge Owners': 'Badge Owners',
-        'Sorry, there are no badges.': 'Sorry, there are no badges.',
-        'Sorry, You don\'t have any badge.': 'Sorry, You don\'t have any badge.',
-        'Hover over a badge to view its title; click a badge to open its introduction page.': 'Hover over a badge to view its title; click a badge to open its introduction page.',
-        'If you have any questions about badge validity, please contact the administrator.': 'If you have any questions about badge validity, please contact the administrator.',
-        'Current Badge': 'Current Badge',
-        'No Badge Enabled': 'No Badge Enabled',
-        'Reset Badge': 'Reset Badge',
+
+    //用户页显示获得的徽章
+    ctx.on('handler/after/UserDetail#get', async (h) => {
+        const uid = h.response.body.udoc?._id;
+        if (!uid) {  
+            // uid 为 0 或 undefined 时，都设置空数组并返回  
+            if (h.response.body.udoc) h.response.body.udoc.badges = [];  
+            h.response.body.badges = [];  
+            return;  
+        }
+
+        try {
+            const cursor = await UserBadgeModel.getMulti(uid);
+            const ddocs = await cursor.toArray();
+            const badgeIds = ddocs.map(d => d.badgeId);
+            const badges = await BadgeModel.getMultiByIds(badgeIds);
+            const badgeMap = new Map(badges.map(b => [b._id, b]));
+            for (const ddoc of ddocs) {
+                ddoc.badge = badgeMap.get(ddoc.badgeId);
+            }
+            h.response.body.badges = ddocs;
+        } catch (error) {
+            h.response.body.badges = [];
+        }
+    });
+
+    ctx.Route('badge_show', '/badge/show', BadgeShowHandler);
+    ctx.Route('badge_manage', '/badge/manage', BadgeManageHandler, PRIV.PRIV_SET_PERM);
+    ctx.Route('badge_add', '/badge/add', BadgeAddHandler, PRIV.PRIV_SET_PERM);
+    ctx.Route('badge_mybadge', '/badge/mybadge', UserBadgeManageHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('badge_detail', '/badge/:id', BadgeDetailHandler);
+    ctx.Route('badge_edit', '/badge/:id/edit', BadgeEditHandler, PRIV.PRIV_SET_PERM);
+    ctx.injectUI('UserDropdown', 'badge_mybadge', { icon: 'crown', displayName: '我的徽章' });
+    ctx.i18n.load('zh', {
+        badge_show: '展示徽章',
+        badge_manage: '管理徽章',
+        badge_add: '添加徽章',
+        badge_mybadge: '我的徽章',
+        badge_detail: '徽章详情',
+        badge_edit: '编辑徽章',
     });
 }

@@ -1,22 +1,24 @@
-import { Context, ObjectId } from 'hydrooj';
+import { db, UserModel } from 'hydrooj';
 import { deleteUserCache } from 'hydrooj/src/model/user';
-import { FindCursor, WithId } from 'mongodb';
 
-export interface UserBadge {
+const collbd = db.collection('badge');
+const collubd = db.collection('user.badge');
+
+interface UserBadge {
     _id: ObjectId;
     owner: number;
     badgeId: number;
     getAt: Date;
 }
 
-export interface Badge {
+interface Badge {
     _id: number;
     short: string;
     title: string;
     backgroundColor: string;
     fontColor: string;
     content: string;
-    users: [number];
+    users: number[];
     createAt: Date;
 }
 
@@ -31,138 +33,145 @@ declare module 'hydrooj' {
     }
 }
 
-const UserBadgeModel = { userBadgeAdd, userBadgeGetMulti, userBadgeDel, userBadgeSel, userBadgeUnset: unsetUserBadge };
-const BadgeModel = { badgeGetMulti, badgeAdd, badgeGet, badgeEdit, badgeDel };
-global.Hydro.model.userBadge = UserBadgeModel;
-global.Hydro.model.badge = BadgeModel;
+class UserBadgeModel {
+    static coll = collubd;
 
-async function setUserBadge(ctx: Context, userId: number, badgeId: number, badge: String): Promise<number> {
-    const result = (await ctx.db.collection('user').findOneAndUpdate({ _id: userId }, { $set: { badgeId, badge } }));
-    if (result) {
-        deleteUserCache(result);
+    static async batchAdd(userIds: number[], badgeId: number): Promise<void> {
+        if (userIds.length === 0) return;
+        await UserBadgeModel.coll.insertMany(
+            userIds.map(uid => ({
+                owner: uid,
+                badgeId: badgeId,
+                getAt: new Date()
+            }))
+        );
     }
-    return result._id;
-}
 
-async function resetBadge(ctx: Context, badgeId: number, badge: String): Promise<number> {
-    const result = (await ctx.db.collection('user').updateMany({ badgeId }, { $set: { badge } })).modifiedCount;
-    if (result) {
-        deleteUserCache(true);
-    }
-    return result;
-}
-
-async function unsetUserBadge(ctx: Context, userId: number): Promise<number> {
-    const result = (await ctx.db.collection('user').findOneAndUpdate({ _id: userId }, { $unset: { badgeId: '', badge: '' } }));
-    if (result) {
-        deleteUserCache(result);
-    }
-    return result._id;
-}
-
-async function unsetBadge(ctx: Context, badgeId: number): Promise<number> {
-    const result = (await ctx.db.collection('user').updateMany({ badgeId }, { $unset: { badgeId: '', badge: '' } })).modifiedCount;
-    if (result) {
-        deleteUserCache(true);
-    }
-    return result;
-}
-
-async function userBadgeAdd(ctx: Context, userId: number, badgeId: number): Promise<ObjectId> {
-    const result = await ctx.db.collection('userBadge').insertOne({
-        _id: new ObjectId(),
-        owner: userId,
-        badgeId,
-        getAt: new Date()
-    });
-    return result.insertedId;
-}
-
-async function userBadgeGetMulti(ctx: Context, userId: number): Promise<FindCursor<WithId<UserBadge>>> {
-    return ctx.db.collection('userBadge').find({ owner: userId }).sort({ badgeId: 1 });
-}
-
-
-async function userBadgeDel(ctx: Context, userId: number, badgeId: number): Promise<number> {
-    if ((await ctx.db.collection('user').findOne({ _id: userId })).badgeId === badgeId) {
-        await unsetUserBadge(ctx, userId);
-    }
-    return (await ctx.db.collection('userBadge').deleteOne({ owner: userId, badgeId })).deletedCount;
-}
-
-async function userBadgeSel(ctx: Context, userId: number, badgeId: number): Promise<number> {
-    const userBadgeId = await ctx.db.collection('userBadge').findOne({ owner: userId, badgeId });
-    if (userBadgeId) {
-        const badge: Badge = await ctx.db.collection('badge').findOne({ _id: badgeId });
-        const badgeid: number = badge._id;
-        const payload: string = badge._id + '#' + badge.short + badge.backgroundColor + badge.fontColor + '#' + badge.title;
-        return await setUserBadge(ctx, userId, badgeid, payload);
-    }
-    return 0;
-}
-
-async function badgeGetMulti(ctx: Context): Promise<FindCursor<WithId<Badge>>> {
-    return ctx.db.collection('badge').find({});
-}
-
-async function badgeAdd(ctx: Context, short: string, title: string, backgroundColor: string, fontColor: string,content: string, users: [number],badgeId?: number,): Promise<number> {
-    if (typeof badgeId !== 'number') {
-        const [badge] = await ctx.db.collection('badge').find({}).sort({ _id: -1 }).limit(1).toArray();
-        badgeId = Math.max((badge?._id || 0) + 1, 1);
-    };
-    const result = await ctx.db.collection('badge').insertOne({
-        _id: badgeId,
-        short,
-        title,
-        backgroundColor,
-        fontColor,
-        content,
-        users,
-        createAt: new Date()
-    });
-    if (users) {
-        for (const userId of users) {
-            await userBadgeAdd(ctx, userId, badgeId);
+    static async batchDel(userIds: number[], badgeId: number): Promise<void> {
+        if (userIds.length === 0) return;
+        await UserBadgeModel.coll.deleteMany({
+            owner: { $in: userIds },
+            badgeId: badgeId
+        });
+        const clearResult = await UserModel.coll.updateMany(
+            { _id: { $in: userIds }, badgeId },
+            { $unset: { badgeId: '', badge: '' } }
+        );
+        // 清除缓存
+        if (clearResult.modifiedCount > 0) {
+            await deleteUserCache(true);
         }
     }
-    return result.insertedId;
+
+    static async getMulti(userId: number) {
+        return await UserBadgeModel.coll.find({ owner: userId }).sort({ badgeId: 1 });
+    }
+
+    static async sel(userId: number, badgeId: number): Promise<number> {
+        const userBadgeId = await UserBadgeModel.coll.findOne({ owner: userId, badgeId: badgeId });
+        if (userBadgeId) {
+            const badge: Badge = await BadgeModel.coll.findOne({ _id: badgeId });
+            if (!badge) return 0;  // 空值检查
+            const badgeid: number = badge._id;
+            const payload: string = `${badge.short}${badge.backgroundColor}${badge.fontColor}#${badge.title}`;
+            return await UserBadgeModel.setUserBadge(userId, badgeid, payload);
+        } else {
+            return 0;
+        }
+    }
+
+    static async setUserBadge(userId: number, badgeId: number, badge: string): Promise<any> {
+        return await UserModel.setById(userId, { badgeId: badgeId, badge: badge });
+    }
+
+    static async unsetUserBadge(userId: number): Promise<void> {
+        await UserModel.setById(userId, undefined, { badgeId: '', badge: '' });
+    }
 }
 
-async function badgeGet(ctx: Context, badgeId: number): Promise<Badge> {
-    return await ctx.db.collection('badge').findOne({ _id: badgeId });
-}
+class BadgeModel {
+    static coll = collbd;
 
-async function badgeEdit(ctx: Context, badgeId: number, short: string, title: string, backgroundColor: string, fontColor: string, content: string, users: [number], users_old: [number]): Promise<number> {
-    const result = await ctx.db.collection('badge').updateOne({ _id: badgeId }, {
-        $set: {
+    static async getMulti() {
+        return await BadgeModel.coll.find({}).sort({ _id: 1 });
+    }
+
+    static async add(short: string, title: string, backgroundColor: string, fontColor: string, content: string, users: number[], badgeId?: number): Promise<number> {
+        if (typeof badgeId !== 'number') {
+            const [badge] = await BadgeModel.coll.find({}).sort({ _id: -1 }).limit(1).toArray();
+            badgeId = Math.max((badge?._id || 0) + 1, 1);
+        };
+        const result = await BadgeModel.coll.insertOne({
+            _id: badgeId,
             short,
             title,
             backgroundColor,
             fontColor,
             content,
-            users
+            users,
+            createAt: new Date()
+        });
+        if (users && users.length > 0) {
+            await  UserBadgeModel.batchAdd(users, badgeId);
         }
-    });
-    if (users_old) {
-        for (const userId of users_old) {
-            if (!users || !users.includes(userId))
-                await userBadgeDel(ctx, userId, badgeId);
-        }
+        return badgeId;
     }
-    if (users) {
-        for (const userId of users) {
-            if (!users_old || !users_old.includes(userId))
-                await userBadgeAdd(ctx, userId, badgeId);
-        }
+
+    static async get(badgeId: number): Promise<Badge | null> {
+        return await BadgeModel.coll.findOne({ _id: badgeId });
     }
-    const badge: string = badgeId + '#' + short + backgroundColor + fontColor + '#' + title;
-    await resetBadge(ctx, badgeId, badge);
-    return result.modifiedCount;
+
+    static async getMultiByIds(badgeIds: number[]): Promise<Badge[]> {
+        if (badgeIds.length === 0) return [];
+        const badges = await BadgeModel.coll.find({ _id: { $in: badgeIds } }).toArray();
+        return badges;
+    }
+
+    static async edit(badgeId: number, short: string, title: string, backgroundColor: string, fontColor: string, content: string, users: number[], users_old: number[]): Promise<number> {
+        const result = await BadgeModel.coll.updateOne({ _id: badgeId }, { $set: { short, title, backgroundColor, fontColor, content, users } });
+
+        const oldSet = users_old ? new Set(users_old) : new Set();
+        const newSet = users ? new Set(users) : new Set();
+
+        const toDelete = users_old?.filter(uid => !newSet.has(uid)) || [];
+        const toAdd = users?.filter(uid => !oldSet.has(uid)) || [];
+
+        await Promise.all([
+            UserBadgeModel.batchDel(toDelete, badgeId),
+            UserBadgeModel.batchAdd(toAdd, badgeId)
+        ]);
+
+        const badgeStr = `${short}${backgroundColor}${fontColor}#${title}`;
+        await BadgeModel.resetBadge(badgeId, badgeStr);
+
+        return result.modifiedCount;
+    }
+
+    static async del(badgeId: number): Promise<number> {
+        const result = await BadgeModel.coll.deleteOne({ _id: badgeId });
+        await UserBadgeModel.coll.deleteMany({ badgeId: badgeId });
+        await BadgeModel.unsetBadge(badgeId);
+        return result.deletedCount;
+    }
+
+    static async resetBadge(badgeId: number, badge: string): Promise<number> {
+        const result = (await UserModel.coll.updateMany({ badgeId }, { $set: { badge } })).modifiedCount;
+        if (result) {
+            await deleteUserCache(true);
+        }
+        return result;
+    }
+
+    static async unsetBadge(badgeId: number): Promise<number> {
+        const result = (await UserModel.coll.updateMany({ badgeId }, { $unset: { badgeId: '', badge: '' } })).modifiedCount;
+        if (result) {
+            await deleteUserCache(true);
+        }
+        return result;
+    }
 }
 
-async function badgeDel(ctx: Context, badgeId: number): Promise<number> {
-    const result = await ctx.db.collection('badge').deleteOne({ _id: badgeId });
-    await ctx.db.collection('userBadge').deleteMany({ badgeId });
-    await unsetBadge(ctx, badgeId);
-    return result.deletedCount;
-}
+global.Hydro.model.userBadge = UserBadgeModel;
+global.Hydro.model.badge = BadgeModel;
+
+export { UserBadgeModel, BadgeModel, UserBadge, Badge };
